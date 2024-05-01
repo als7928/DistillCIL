@@ -1,0 +1,36 @@
+{
+    "use_pretrained": true,
+    "pretrained_dir": "pretrained/teacher_task0_resnet32_tstacc_96.40.pth",
+
+    "prefix": "reproduce",
+    "dataset": "cifar10",
+    "shuffle": true,
+    "init_cls": 2,
+    "increment": 2,
+    "model_name": "single_kd",
+    "device": ["0","1","2","3"],
+    "seed": [1993],
+    "num_workers": 8,
+    "batch_size": 128,
+
+    "mode": "Vanila",
+
+    "teacher_convnet_type": "resnet32",
+    "teacher_epochs": 200,
+    "teacher_lrate": 0.1,
+    "teacher_lrate_decay": 0.1,
+    "teacher_weight_decay": 5e-4,
+    "teacher_milestones": [60, 120, 170],
+
+    "convnet_type": "resnet32",
+    "init_epoch": 200,
+    "init_lr": 0.1,
+    "init_lr_decay": 0.1,
+    "init_weight_decay": 5e-4,
+    "init_milestones": [60, 120, 170],
+
+    "alpha": 0.5,
+    "temperature": 1,
+    "multiplier": 1.0
+
+}
