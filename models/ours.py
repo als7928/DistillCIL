@@ -323,7 +323,8 @@ class Ours(BaseLearner):
         return inter, intra
     
     def cosine_similarity(self, a, b, eps=1e-8):
-        return (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1) + eps)
+        
+        return (a * b).sum(1) / (a.norm(dim=1)* b.norm(dim=1) + eps)
 
 
     def pearson_correlation(self, a, b, eps=1e-8):
@@ -332,6 +333,7 @@ class Ours(BaseLearner):
 
 
     def inter_class_relation(self, y_s, y_t, mode):
+        #1
         if mode == 0:
             return 1 - self.pearson_correlation(y_s, y_t).mean()
         else:
