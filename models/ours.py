@@ -333,7 +333,7 @@ class Ours(BaseLearner):
 
 
     def inter_class_relation(self, y_s, y_t, mode):
-        #3
+        #32341
         if mode == 0:
             return 1 - self.pearson_correlation(y_s, y_t).mean()
         else:
