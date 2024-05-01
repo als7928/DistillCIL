@@ -3,13 +3,26 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
-from utils.data import iCIFAR10, iCIFAR100, iImageNet100, iImageNet1000
+from utils.data import (iMNIST, 
+                        iMNIST28,
+                        iCIFAR10,
+                        iCIFAR100,
+                        iImageNet100,
+                        iImageNet1000,
+                        iFashionMNIST,
+                        iPermutedMNIST,
+                        iRotatedMNIST,
+                        iEMNIST,
+                        FastCelebA)
 from tqdm import tqdm
+from copy import deepcopy
+import torch
 
 class DataManager(object):
     def __init__(self, dataset_name, shuffle, seed, init_cls, increment):
         self.dataset_name = dataset_name
         self._setup_data(dataset_name, shuffle, seed)
+        print(len(self._class_order))
         assert init_cls <= len(self._class_order), "No enough classes."
         self._increments = [init_cls]
         while sum(self._increments) + increment < len(self._class_order):
@@ -73,7 +86,14 @@ class DataManager(object):
             appendent_data, appendent_targets = appendent
             data.append(appendent_data)
             targets.append(appendent_targets)
-
+        if any([self.dataset_name.lower() == 'mnist',
+                self.dataset_name.lower() == 'mnist_28',
+                self.dataset_name.lower() == 'fashionmnist',
+                self.dataset_name.lower() == 'permutedmnist',
+                self.dataset_name.lower() == 'rotatedmnist',
+                self.dataset_name.lower() == 'emnist',
+                ]):
+            data = [np.stack(data[i]) for i in range(len(data))]
         data, targets = np.concatenate(data), np.concatenate(targets)
 
         if ret_data:
@@ -147,17 +167,23 @@ class DataManager(object):
         train_data, train_targets = [], []
         val_data, val_targets = [], []
         for idx in indices:
-            class_data, class_targets = self._select(
-                x, y, low_range=idx, high_range=idx + 1
-            )
-            val_indx = np.random.choice(
-                len(class_data), val_samples_per_class, replace=False
-            )
-            train_indx = list(set(np.arange(len(class_data))) - set(val_indx))
-            val_data.append(class_data[val_indx])
-            val_targets.append(class_targets[val_indx])
-            train_data.append(class_data[train_indx])
-            train_targets.append(class_targets[train_indx])
+            try:
+                class_data, class_targets = self._select(
+                    x, y, low_range=idx, high_range=idx + 1
+                )
+                class_data = torch.stack(class_data).numpy();
+                class_targets = np.array(class_targets);
+                val_indx = np.random.choice(
+                    len(class_data), val_samples_per_class, replace=False
+                )
+                train_indx = list(set(np.arange(len(class_data))) - set(val_indx))
+                val_data.append(class_data[val_indx])
+                val_targets.append(class_targets[val_indx])
+                train_data.append(class_data[train_indx])
+                train_targets.append(class_targets[train_indx])
+            except:
+                breakpoint()
+
 
         if appendent is not None:
             appendent_data, appendent_targets = appendent
@@ -165,6 +191,8 @@ class DataManager(object):
                 append_data, append_targets = self._select(
                     appendent_data, appendent_targets, low_range=idx, high_range=idx + 1
                 )
+                append_data = np.array(append_data)
+                append_targets = np.array(append_targets)          
                 val_indx = np.random.choice(
                     len(append_data), val_samples_per_class, replace=False
                 )
@@ -184,6 +212,8 @@ class DataManager(object):
         ), DummyDataset(val_data, val_targets, trsf, self.use_path)
 
     def _setup_data(self, dataset_name, shuffle, seed):
+        if dataset_name == "celeba":
+            self._train_
         idata = _get_idata(dataset_name)
         idata.download_data()
 
@@ -277,6 +307,18 @@ def _get_idata(dataset_name):
         return iImageNet1000()
     elif name == "imagenet100":
         return iImageNet100()
+    elif name == "mnist":
+        return iMNIST()
+    elif name == "fashionmnist":
+        return iFashionMNIST()
+    elif name == "permutedmnist":
+        return iPermutedMNIST()
+    elif name == "rotatedmnist":
+        return iRotatedMNIST()
+    elif name == "emnist":
+        return iEMNIST()
+    elif name == "mnist_28":
+        return iMNIST28()
     else:
         raise NotImplementedError("Unknown dataset {}.".format(dataset_name))
 

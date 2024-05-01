@@ -11,16 +11,55 @@ from utils.inc_net import IncrementalNet, BaseNet
 from models.base import BaseLearner
 from utils.toolkit import target2onehot, tensor2numpy
 from torch.autograd import Variable
+import os
 
 import copy
 import glob
 
+class KDLoss(nn.KLDivLoss):
+    """
+    A standard knowledge distillation (KD) loss module.
+
+    .. math::
+
+       L_{KD} = \\alpha \cdot L_{CE} + (1 - \\alpha) \cdot \\tau^2 \cdot L_{KL}
+
+    Geoffrey Hinton, Oriol Vinyals, Jeff Dean: `"Distilling the Knowledge in a Neural Network" <https://arxiv.org/abs/1503.02531>`_ @ NIPS 2014 Deep Learning and Representation Learning Workshop (2014)
+
+    :param student_module_path: student model's logit module path.
+    :type student_module_path: str
+    :param student_module_io: 'input' or 'output' of the module in the student model.
+    :type student_module_io: str
+    :param teacher_module_path: teacher model's logit module path.
+    :type teacher_module_path: str
+    :param teacher_module_io: 'input' or 'output' of the module in the teacher model.
+    :type teacher_module_io: str
+    :param temperature: hyperparameter :math:`\\tau` to soften class-probability distributions.
+    :type temperature: float
+    :param alpha: balancing factor for :math:`L_{CE}`, cross-entropy.
+    :type alpha: float
+    :param beta: balancing factor (default: :math:`1 - \\alpha`) for :math:`L_{KL}`, KL divergence between class-probability distributions softened by :math:`\\tau`.
+    :type beta: float or None
+    :param reduction: ``reduction`` for KLDivLoss. If ``reduction`` = 'batchmean', CrossEntropyLoss's ``reduction`` will be 'mean'.
+    :type reduction: str or None
+    """
+    def __init__(self, temperature, reduction='batchmean', **kwargs):
+        super().__init__(reduction=reduction)
+        self.temperature = temperature
+        cel_reduction = 'mean' if reduction == 'batchmean' else reduction
+        self.cross_entropy_loss = nn.CrossEntropyLoss(reduction=cel_reduction, **kwargs)
+
+    def forward(self, student_logits, teacher_logits, targets=None, *args, **kwargs):
+        soft_loss = super().forward(torch.log_softmax(student_logits / self.temperature, dim=1),
+                                    torch.softmax(teacher_logits / self.temperature, dim=1))
+
+        return soft_loss
 class Ours(BaseLearner):
     def __init__(self, args):
         super().__init__(args)
         self._network = IncrementalNet(self.args, False)
         self.teacher_model_old = IncrementalNet(self.args, False)
-        self.teacher_model_new = None
+        self.teacher_model_new = IncrementalNet(self.args, False)
 
         self.args = args
         self.num_workers = self.args["num_workers"]
@@ -36,40 +75,35 @@ class Ours(BaseLearner):
         self.weight_decay = self.args["weight_decay"]
         self.milestones = self.args["milestones"]
 
+    def save_weight(self, model, save_path):
+        if len(self._multiple_gpus) > 1 and isinstance(model, nn.DataParallel):
+            model = model.module
+        print('Saved pretrained weight', save_path)
+        torch.save(model.state_dict(), save_path)
+        if len(self._multiple_gpus) > 1:
+            model = nn.DataParallel(model, self._multiple_gpus)
 
     def after_task(self):
         self._known_classes = self._total_classes
-        self.teacher_model_old= copy.deepcopy(self._network)
-        del self.teacher_model_new
-    
-    # def replace_fc(self,trainloader, model, args):
-    #     model = model.eval()
-    #     embedding_list = []
-    #     label_list = []
-    #     with torch.no_grad():
-    #         for i, batch in enumerate(trainloader):
-    #             (_,data,label) = batch
-    #             data = data.cuda()
-    #             label = label.cuda()
-    #             embedding = model(data)["features"]
-    #             embedding_list.append(embedding.cpu())
-    #             label_list.append(label.cpu())
-    #     embedding_list = torch.cat(embedding_list, dim=0)
-    #     label_list = torch.cat(label_list, dim=0)
+        # self.teacher_model_old= copy.deepcopy(self._network)
+        self.teacher_model_old= self._network.copy().freeze()
 
-    #     class_list = np.unique(self.train_dataset.labels)
-    #     proto_list = []
-    #     for class_index in class_list:
-    #         # print('Replacing...',class_index)
-    #         data_index = (label_list == class_index).nonzero().squeeze(-1)
-    #         embedding = embedding_list[data_index]
-    #         proto = embedding.mean(0)
-    #         self._network.fc.weight.data[class_index] = proto
-    #     return model
+    def teacher_accuracy(self, model, loader):
+        model.eval()
+        correct, total = 0, 0
+        for i, (_, inputs, targets) in enumerate(loader):
+            inputs = inputs.to(self._device)
+            targets = targets - self._known_classes
+            with torch.no_grad():
+                outputs = model(inputs)["logits"]
+            predicts = torch.max(outputs, dim=1)[1]
+            correct += (predicts.cpu() == targets).sum()
+            total += len(targets)
 
-    def teacher_train(self, train_loader, test_loader):
+        return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+                
+    def _teacher_train(self, train_loader, test_loader):
         epochs = self.args["teacher_epochs"]
-        self.teacher_model_new.to(self._device)
         teacher_optimizer = optim.SGD(
             self.teacher_model_new.parameters(),
             lr=self.lrate,
@@ -83,19 +117,17 @@ class Ours(BaseLearner):
         logging.info(
             "Teacher model: learning on {}-{}".format(self._known_classes, self._total_classes)
         )
+
         prog_bar = tqdm(range(epochs))
         for _, epoch in enumerate(prog_bar):
             self.teacher_model_new.train()
-
             losses = 0.0
             correct, total = 0, 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
                 logits = self.teacher_model_new(inputs)["logits"]
-
                 # logits = logits[:, self._known_classes :]
                 targets = targets - self._known_classes
-
                 loss = F.cross_entropy(logits, targets)
 
                 teacher_optimizer.zero_grad()
@@ -111,7 +143,7 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
 
             if epoch % 5 == 0:
-                test_acc = self._compute_accuracy(self.teacher_model_new, test_loader)
+                test_acc = self.teacher_accuracy(self.teacher_model_new, test_loader)
                 info = "Teacher: Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
                     epoch + 1,
@@ -129,19 +161,18 @@ class Ours(BaseLearner):
                     train_acc,
                 )
 
-        prog_bar.set_description(info)
+            prog_bar.set_description(info)
+            logging.info(info)
 
-        if len(self._multiple_gpus) > 1:
-            self.teacher_model_new = self.teacher_model_new.module
-        savepath = "pretrained/teacher_task{}_epoch{}.pth".format(self._cur_task, epochs)
-        torch.save(self.teacher_model_new.state_dict(), savepath)
+        savepath = "pretrained/{}_{}_task{}_epoch{}_tstacc_{:.2f}.pth".format(self.args["dataset"], self.args["convnet_type"], self._cur_task, epoch+1, test_acc)
+        self.save_weight(self.teacher_model_new, savepath)
+
     
     def incremental_train(self, data_manager):
         self._cur_task += 1
         self._total_classes = self._known_classes + data_manager.get_task_size(
             self._cur_task
         )
-        # self._network = IncrementalNet(self.args, False) # 초기화
         for layer in self._network.children():
             if hasattr(layer, 'reset_parameters'):
                 layer.reset_parameters()
@@ -166,35 +197,30 @@ class Ours(BaseLearner):
             test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
         )
 
+        teacher_test_dataset = data_manager.get_dataset(
+            np.arange(self._known_classes, self._total_classes), source="test",  mode="test",
+        )
+        self.teacher_test_loader = DataLoader(
+            teacher_test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
+        )
 
-        if len(self._multiple_gpus) > 1:
-            self._network = nn.DataParallel(self._network, self._multiple_gpus)
-
-        if self._cur_task > 0:
-            self.teacher_model_new = IncrementalNet(self.args, False)
-            self.teacher_model_new.update_fc(self._total_classes-self._known_classes)
-
-            if self.args["use_pretrained"]:
-                PATH = "pretrained/{}/teacher_task{}_epoch{}.pth".format(self.args["pretrained_dir"],self._cur_task,200)
-                try:
-                    print('Load', PATH)
-                    self.teacher_model_new.load_state_dict(torch.load(PATH))
-                    # if len(self._multiple_gpus) > 1:
-                        # self.teacher_model_new = nn.DataParallel(self.teacher_model_new, self._multiple_gpus)
-                except BaseException as e:
-                    print(e)
-                    print('Load failed train new teacher', PATH)
-                    # if len(self._multiple_gpus) > 1:
-                    #     self.teacher_model_new = nn.DataParallel(self.teacher_model_new, self._multiple_gpus)
-                    self.teacher_train(self.train_loader, self.test_loader)
+        train_total_dataset = data_manager.get_dataset(
+            np.arange(0, self._total_classes), source="train", mode="train"
+        )
+        self.total_train_loader = DataLoader(
+            train_total_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
+        )
 
         self._train(self.train_loader, self.test_loader)
-
-            # if self._cur_task > 0:
-            #     self.teacher_model_new = self.teacher_model_new.module
+        if hasattr(self._network, 'module'):
+            self._network = self._network.module
+        if hasattr(self.teacher_model_new, 'module'):
+            self.teacher_model_new = self.teacher_model_new.module
+        if hasattr(self.teacher_model_old, 'module'):
+            self.teacher_model_old = self.teacher_model_old.module
 
     def _train(self, train_loader, test_loader):
-        self._network.to(self._device)
+        pre_train_loaded = False
         if self._cur_task == 0:
             optimizer = optim.SGD(
                 self._network.parameters(),
@@ -202,24 +228,53 @@ class Ours(BaseLearner):
                 lr=self.init_lr,
                 weight_decay=self.init_weight_decay
             )
+            
             scheduler = optim.lr_scheduler.MultiStepLR(
                 optimizer=optimizer, milestones=self.init_milestones, gamma=self.init_lr_decay
             )
-            if self.args["use_pretrained"]:
-                PATH = "pretrained/{}/teacher_task{}_epoch{}.pth".format(self.args["pretrained_dir"],self._cur_task,200)
+            if self._cur_task < len(self.args["pretrained"]):
+                PATH = os.path.join("pretrained/{}/{}".format(self.args["dataset"], self.args["convnet_type"]), self.args["pretrained"][self._cur_task])
                 try:
-                    print('Load', PATH)
+                    print('Loading pretrained weight', PATH)
                     self._network.load_state_dict(torch.load(PATH))
-                except:
-                    print('Load failed, train new student', PATH)
-                    self._init_train(train_loader, test_loader, optimizer, scheduler)
-            else:
+                    pre_train_loaded = True
+                    if len(self._multiple_gpus) > 1:
+                        self._network = nn.DataParallel(self._network, self._multiple_gpus)
+                    self._network.to(self._device)
+                except BaseException as e:
+                    print(e)
+            if not pre_train_loaded:
+                if len(self._multiple_gpus) > 1:
+                    self._network = nn.DataParallel(self._network, self._multiple_gpus)
+                self._network.to(self._device)
                 self._init_train(train_loader, test_loader, optimizer, scheduler)
-        else:
-            self.teacher_model_new.to(self._device)
-            for layer in self._network.children():
+
+        else: # set teacher models for knowledge distillation
+            if len(self._multiple_gpus) > 1:
+                self._network = nn.DataParallel(self._network, self._multiple_gpus)
+            self._network.to(self._device)
+            self.teacher_model_new.update_fc(self._total_classes-self._known_classes)
+
+            for layer in self.teacher_model_new.children():
                 if hasattr(layer, 'reset_parameters'):
                     layer.reset_parameters()
+
+            if self._cur_task < len(self.args["pretrained"]):
+                PATH = os.path.join("pretrained/{}/{}".format(self.args["dataset"], self.args["convnet_type"]), self.args["pretrained"][self._cur_task])
+                try:
+                    print('Loading pretrained weight', PATH)
+                    self.teacher_model_new.load_state_dict(torch.load(PATH))
+                    pre_train_loaded = True
+                    if len(self._multiple_gpus) > 1:
+                        self.teacher_model_new = nn.DataParallel(self.teacher_model_new, self._multiple_gpus)
+                    self.teacher_model_new.to(self._device)
+                except BaseException as e:
+                    print(e)
+            if not pre_train_loaded:
+                if len(self._multiple_gpus) > 1:
+                    self.teacher_model_new = nn.DataParallel(self.teacher_model_new, self._multiple_gpus)
+                self.teacher_model_new.to(self._device)
+                self._teacher_train(self.train_loader, self.teacher_test_loader)
 
             optimizer = optim.SGD(
                 self._network.parameters(),
@@ -230,18 +285,13 @@ class Ours(BaseLearner):
             scheduler = optim.lr_scheduler.MultiStepLR(
                 optimizer=optimizer, milestones=self.milestones, gamma=self.lrate_decay
             )
-            
-            self._update_representation(train_loader, test_loader, optimizer, scheduler)
-
-
-
+            self._update_representation(self.total_train_loader, test_loader, optimizer, scheduler)
 
 
     def _init_train(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(range(self.args["init_epoch"]))
         for _, epoch in enumerate(prog_bar):
             self._network.train()
-            # self.teacher_model.eval()
             losses = 0.0
             correct, total = 0, 0
             for i, (_, inputs, targets) in enumerate(train_loader):
@@ -249,10 +299,6 @@ class Ours(BaseLearner):
                 logits = self._network(inputs)["logits"]
                 
                 loss = F.cross_entropy(logits, targets)
-                # teacher_logits = self.teacher_model(inputs)["logits"]
-                # teacher_logits = Variable(teacher_logits, requires_grad=False)
-                # loss = self.loss_kd_self(logits, targets, teacher_logits, self.args)
-
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -286,75 +332,13 @@ class Ours(BaseLearner):
             prog_bar.set_description(info)
             logging.info(info)
 
-        if len(self._multiple_gpus) > 1:
-            self._network = self._network.module
-        savepath = "pretrained/teacher_task{}_epoch{}.pth".format(self._cur_task, self.args["init_epoch"])
-        torch.save(self._network.state_dict(), savepath)
-
-
-
-
-    def loss_kd_self(self, outputs, labels, teacher_outputs):
-        """
-        loss function for self training: Tf-KD_{self}
-        """
-        T = self.args["temperature"]
-        alpha = self.args["alpha"]
-        D_KL = nn.KLDivLoss()(F.log_softmax(outputs/T, dim=1), F.softmax(teacher_outputs/T, dim=1)) * (T * T) * self.args["multiplier"]  # multiple is 1.0 in most of cases, some cases are 10 or 50
-        KD_loss =  alpha*D_KL
-
-        return KD_loss
-
-    def perason_dist(self, Y_s, Y_t):
-        inter = 0
-        intra = 0
-        batch_len = Y_t.shape[0]
-        class_len = Y_t.shape[1]
-        for batch in range(batch_len):
-            u=Y_s[batch,:]
-            v=Y_t[batch,:]
-            inter += (1 - torch.corrcoef(torch.stack([u,v]))[0,1])
-        for cls in range(class_len):
-            u=Y_s[:,cls]
-            v=Y_t[:,cls]
-            intra += (1 - torch.corrcoef(torch.stack([u,v]))[0,1])
-        inter = inter/batch_len
-        intra = intra/class_len
-        return inter, intra
-    
-    def cosine_similarity(self, a, b, eps=1e-8):
-        
-        return (a * b).sum(1) / (a.norm(dim=1)* b.norm(dim=1) + eps)
-
-
-    def pearson_correlation(self, a, b, eps=1e-8):
-        return self.cosine_similarity(a - a.mean(1).unsqueeze(1),
-                                b - b.mean(1).unsqueeze(1), eps)
-
-
-    def inter_class_relation(self, y_s, y_t, mode):
-        #32341
-        if mode == 0:
-            return 1 - self.pearson_correlation(y_s, y_t).mean()
-        else:
-            return abs(self.pearson_correlation(y_s, y_t).mean())
-
-    def intra_class_relation(self, y_s, y_t, mode):
-        return self.inter_class_relation(y_s.transpose(0, 1), y_t.transpose(0, 1), mode)
-
-    def loss_relation(self, u, v, mode=0):
-        T = self.args["temperature"]
-        U = F.softmax(u/T, dim=1)
-        V = F.softmax(v/T, dim=1)
-        inter_loss = T**2 * self.inter_class_relation(U, V, mode)
-        intra_loss = T**2 * self.intra_class_relation(U, V, mode)
-        return inter_loss, intra_loss
-
-    
-    
+        savepath = "pretrained/{}_{}_task{}_epoch{}_tstacc_{:.2f}.pth".format(self.args["dataset"], self.args["convnet_type"], self._cur_task, epoch+1, test_acc)
+        self.save_weight(self._network, savepath)
+   
     def _update_representation(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(range(self.epochs))
         codebook = torch.nn.Parameter(torch.randn(64,64)).to(self._device)
+        kd_loss = KDLoss(temperature=self.args["temperature"])
         for _, epoch in enumerate(prog_bar):
             self._network.train()
             self.teacher_model_old.eval()
@@ -363,47 +347,40 @@ class Ours(BaseLearner):
             correct, total = 0, 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
-                logits = self._network(inputs)["logits"]
+                fake_targets = targets - self._known_classes
+
+                student_logits = self._network(inputs)["logits"]
                 student_feat = self._network(inputs)["features"]
                 old_teacher_feat = self.teacher_model_old(inputs)["features"]
                 new_teacher_feat = self.teacher_model_new(inputs)["features"]
-                fake_targets = targets - self._known_classes
                 a = old_teacher_feat @ codebook
                 b = new_teacher_feat @ codebook
                 c = student_feat @ codebook
-                loss_d1, loss_d2 = self.loss_relation(a,b, mode=1)
 
                 old_teacher_logits = self.teacher_model_old.fc(a)["logits"]
-                new_teacher_logits = self.teacher_model_new.fc(b)["logits"]
                 if len(self._multiple_gpus) > 1:
+                    new_teacher_logits = self.teacher_model_new.module.fc(b)["logits"]
                     logits_com = self._network.module.fc(c)["logits"]
                 else:
                     logits_com = self._network.fc(c)["logits"]
-                old_logits = logits_com[:, :self._known_classes]
-                new_logits = logits_com[:, self._known_classes:]
+                    new_teacher_logits = self.new_teacher_logits.fc(c)["logits"]
 
-                loss_cls = F.cross_entropy(new_logits, fake_targets)
-                # loss_cls = F.cross_entropy(logits[:, self._known_classes:], fake_targets)
-                loss_inter_old, loss_intra_old = self.loss_relation(old_logits, old_teacher_logits)
-                loss_inter_new, loss_intra_new = self.loss_relation(new_logits, new_teacher_logits)
-                loss_inter, loss_intra = self.loss_relation(logits, torch.cat([old_teacher_logits, new_teacher_logits], dim=1))
+                student_logits_old = logits_com[:, :self._known_classes]
+                student_logits_new = logits_com[:, self._known_classes:]
 
-                # loss = loss_d1 + loss_d2 + loss_cls + loss_inter_old+ loss_intra_old+ loss_inter_new + loss_intra_new+loss_inter+loss_intra
-                loss = loss_cls
+                loss_cls = F.cross_entropy(student_logits, fake_targets)
+                
+                loss_kd_old = kd_loss(student_logits_old, old_teacher_logits)
+                loss_kd_new = kd_loss(student_logits_new, new_teacher_logits)
 
-                print("{:.3f}|{:.3f}|{:.3f}|{:.3f}|{:.3f}|{:.3f}|{:.3f}|{:.3f}|{:.3f}|".format(loss_d1 , loss_d2 , loss_cls , loss_inter_old , loss_intra_old , loss_inter_new ,  loss_intra_new , loss_inter , loss_intra))
-
-                # teacher_logits = self.teacher_model_new(inputs)["logits"]
-                # teacher_logits = Variable(teacher_logits, requires_grad=False)
-                # loss_clf = self.loss_kd_self(logits[:, self._known_classes :], fake_targets, teacher_logits)
-                # loss = loss_cls + 0*loss_inter_old + 0*loss_intra_old + loss_inter_new + loss_intra_new
+                loss = loss_cls + loss_kd_old + loss_kd_new
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 losses += loss.item()
 
-                _, preds = torch.max(logits, dim=1)
+                _, preds = torch.max(student_logits, dim=1)
                 correct += preds.eq(targets.expand_as(preds)).cpu().sum()
                 total += len(targets)
 
@@ -411,6 +388,8 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
+                
+                print("{:.3f}|{:.3f}|{:.3f}|{:.3f}|".format(loss, loss_cls, loss_kd_old, loss_kd_new))
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
                     epoch + 1,
