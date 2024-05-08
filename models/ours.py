@@ -16,6 +16,47 @@ import os
 import copy
 import glob
 
+class Encoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(Encoder, self).__init__()
+        self.layer1 = nn.Linear(input_dim, hidden_dim)
+        self.layer2 = nn.Linear(hidden_dim, output_dim)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.relu(x)
+        encoded = self.layer2(x)
+        return encoded
+    
+class InterClassSeparationLoss(nn.Module):
+    def __init__(self, num_classes, feature_dim):
+        super(InterClassSeparationLoss, self).__init__()
+        self.num_classes = num_classes
+        self.feature_dim = feature_dim
+        self.eps = 1e-8
+
+    def forward(self, features, labels):
+        # Initialize a centroid tensor
+        centroids = torch.zeros((self.num_classes, self.feature_dim), device=features.device)
+        count = torch.zeros(self.num_classes, device=features.device)
+
+        # Accumulate features for each class
+        for i in range(self.num_classes):
+            mask = (labels == i)
+            if torch.sum(mask) > 0:
+                centroids[i] = torch.mean(features[mask], dim=0)
+                count[i] = torch.sum(mask)
+
+        # Calculate distance between centroids
+        loss = 0
+        for i in range(self.num_classes):
+            for j in range(i + 1, self.num_classes):
+                if count[i] > 0 and count[j] > 0:
+                    distance = torch.norm(centroids[i] - centroids[j])
+                    loss = loss + torch.exp(-4*(distance + self.eps))  # Maximize separation
+        return loss
+ 
 class KDLoss(nn.KLDivLoss):
     """
     A standard knowledge distillation (KD) loss module.
@@ -49,10 +90,9 @@ class KDLoss(nn.KLDivLoss):
         cel_reduction = 'mean' if reduction == 'batchmean' else reduction
         self.cross_entropy_loss = nn.CrossEntropyLoss(reduction=cel_reduction, **kwargs)
 
-    def forward(self, student_logits, teacher_logits, targets=None, *args, **kwargs):
+    def forward(self, student_logits, teacher_logits, *args, **kwargs):
         soft_loss = super().forward(torch.log_softmax(student_logits / self.temperature, dim=1),
                                     torch.softmax(teacher_logits / self.temperature, dim=1))
-
         return soft_loss
 class Ours(BaseLearner):
     def __init__(self, args):
@@ -74,6 +114,12 @@ class Ours(BaseLearner):
         self.lrate = self.args["lrate"]
         self.weight_decay = self.args["weight_decay"]
         self.milestones = self.args["milestones"]
+
+    @staticmethod
+    def print_loss(*args):
+        for l in args:
+            print("{:.3f}".format(l), end ="|")
+        print(" ")
 
     def save_weight(self, model, save_path):
         if len(self._multiple_gpus) > 1 and isinstance(model, nn.DataParallel):
@@ -128,6 +174,7 @@ class Ours(BaseLearner):
                 logits = self.teacher_model_new(inputs)["logits"]
                 # logits = logits[:, self._known_classes :]
                 targets = targets - self._known_classes
+                
                 loss = F.cross_entropy(logits, targets)
 
                 teacher_optimizer.zero_grad()
@@ -208,15 +255,32 @@ class Ours(BaseLearner):
             np.arange(0, self._total_classes), source="train", mode="train"
         )
         self.total_train_loader = DataLoader(
-            train_total_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
+            train_total_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers
+        )
+
+        train_memory_dataset = data_manager.get_dataset(
+            np.arange(self._known_classes, self._total_classes),
+            source="train",
+            mode="train",
+            appendent=self._get_memory(),
+        )
+        class_sample_count = np.array([len(np.where(train_memory_dataset.labels==t)[0]) for t in np.unique(train_memory_dataset.labels)])
+        weights = 1. / class_sample_count
+        samples_weights = weights[train_memory_dataset.labels]
+        assert len(samples_weights) == len(train_memory_dataset.labels)
+        sampler = torch.utils.data.sampler.WeightedRandomSampler(samples_weights, len(samples_weights), replacement=True)
+        
+        self.train_memory_loader = DataLoader(
+            train_memory_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=sampler
         )
 
         self._train(self.train_loader, self.test_loader)
-        if hasattr(self._network, 'module'):
+        self.build_rehearsal_memory(data_manager, self.args["memory_per_class"])
+        if isinstance(self._network, nn.DataParallel):
             self._network = self._network.module
-        if hasattr(self.teacher_model_new, 'module'):
+        if isinstance(self.teacher_model_new, nn.DataParallel):
             self.teacher_model_new = self.teacher_model_new.module
-        if hasattr(self.teacher_model_old, 'module'):
+        if isinstance(self.teacher_model_old, nn.DataParallel):
             self.teacher_model_old = self.teacher_model_old.module
 
     def _train(self, train_loader, test_loader):
@@ -285,7 +349,7 @@ class Ours(BaseLearner):
             scheduler = optim.lr_scheduler.MultiStepLR(
                 optimizer=optimizer, milestones=self.milestones, gamma=self.lrate_decay
             )
-            self._update_representation(self.total_train_loader, test_loader, optimizer, scheduler)
+            self._update_representation(self.train_memory_loader, test_loader, optimizer, scheduler)
 
 
     def _init_train(self, train_loader, test_loader, optimizer, scheduler):
@@ -338,7 +402,14 @@ class Ours(BaseLearner):
     def _update_representation(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(range(self.epochs))
         codebook = torch.nn.Parameter(torch.randn(64,64)).to(self._device)
+        # codebook = torch.nn.Linear(self._total_classes,self._total_classes,True).to(self._device)
         kd_loss = KDLoss(temperature=self.args["temperature"])
+        myLoss2 = InterClassSeparationLoss(self._total_classes, feature_dim=64*2)
+        encoder_for_student = Encoder(64, 64, 64).to(self._device)
+        encoder_for_old = Encoder(64, 64, 64).to(self._device)
+        encoder_for_new = Encoder(64, 64, 64).to(self._device)
+
+
         for _, epoch in enumerate(prog_bar):
             self._network.train()
             self.teacher_model_old.eval()
@@ -347,33 +418,30 @@ class Ours(BaseLearner):
             correct, total = 0, 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
-                fake_targets = targets - self._known_classes
 
+                # fake_targets = targets - self._known_classes
                 student_logits = self._network(inputs)["logits"]
+
                 student_feat = self._network(inputs)["features"]
-                old_teacher_feat = self.teacher_model_old(inputs)["features"]
-                new_teacher_feat = self.teacher_model_new(inputs)["features"]
-                a = old_teacher_feat @ codebook
-                b = new_teacher_feat @ codebook
-                c = student_feat @ codebook
+                teacher_old_feat = self.teacher_model_old(inputs)["features"]
+                teacher_new_feat = self.teacher_model_new(inputs)["features"]
+                a = encoder_for_old(teacher_old_feat) @ codebook
+                b = encoder_for_new(teacher_new_feat) @ codebook
+                c = encoder_for_student(student_feat) @ codebook
 
-                old_teacher_logits = self.teacher_model_old.fc(a)["logits"]
-                if len(self._multiple_gpus) > 1:
-                    new_teacher_logits = self.teacher_model_new.module.fc(b)["logits"]
-                    logits_com = self._network.module.fc(c)["logits"]
-                else:
-                    logits_com = self._network.fc(c)["logits"]
-                    new_teacher_logits = self.new_teacher_logits.fc(c)["logits"]
-
-                student_logits_old = logits_com[:, :self._known_classes]
-                student_logits_new = logits_com[:, self._known_classes:]
-
-                loss_cls = F.cross_entropy(student_logits, fake_targets)
+                test_loss = myLoss2(torch.cat([a,b],dim=1), targets)
                 
-                loss_kd_old = kd_loss(student_logits_old, old_teacher_logits)
-                loss_kd_new = kd_loss(student_logits_new, new_teacher_logits)
+                if len(self._multiple_gpus) > 1:
+                    student_logits_com = self._network.module.fc(c)["logits"]
+                else:
+                    student_logits_com = self._network.fc(c)["logits"]
 
-                loss = loss_cls + loss_kd_old + loss_kd_new
+                # loss_cls = F.cross_entropy(student_logits, targets)
+                loss_cls_com = F.cross_entropy(student_logits_com, targets)
+
+                loss_kd = kd_loss(student_logits, student_logits_com)
+
+                loss = loss_cls_com  + loss_kd + test_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -388,8 +456,8 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
-                
-                print("{:.3f}|{:.3f}|{:.3f}|{:.3f}|".format(loss, loss_cls, loss_kd_old, loss_kd_new))
+                self.print_loss(loss, loss_cls_com , loss_kd ,test_loss)
+
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
                     epoch + 1,

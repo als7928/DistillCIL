@@ -1,0 +1,1 @@
+    "pretrained": ["mnist_resnet20_task0_epoch1_tstacc_99.35.pth", "mnist_resnet20_task1_epoch1_tstacc_99.75.pth", "mnist_resnet20_task2_epoch1_tstacc_99.65.pth", "mnist_resnet20_task3_epoch1_tstacc_95.50.pth", "mnist_resnet20_task4_epoch1_tstacc_99.35.pth"],
