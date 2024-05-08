@@ -1,5 +1,6 @@
 {
     "prefix": "reproduce",
+<<<<<<< HEAD
     "dataset": "mnist",
     "convnet_type": "resnet20",
 
@@ -7,6 +8,14 @@
 
     "use_pretrained": true,
     "pretrained": ["mnist_resnet20_task0_epoch1_tstacc_99.35.pth", "mnist_resnet20_task1_epoch1_tstacc_99.75.pth", "mnist_resnet20_task2_epoch1_tstacc_99.65.pth", "mnist_resnet20_task3_epoch1_tstacc_95.50.pth", "mnist_resnet20_task4_epoch1_tstacc_99.35.pth"],
+=======
+    "convnet_type": "resnet20",
+    "dataset": "mnist",
+
+    "use_pretrained": true,
+    "pretrained": ["mnist_resnet20_task0_epoch1_tstacc_99.35.pth"],
+
+>>>>>>> 448282f1a4b7bdc51d905ba932172465507f731b
     "shuffle": true,
     "init_cls": 2,
     "increment": 2,
@@ -16,6 +25,7 @@
     "num_workers": 8,
     "batch_size": 128,
 
+<<<<<<< HEAD
     "init_epoch": 20,
     "init_lr": 0.01,
     "init_lr_decay": 0.05,
@@ -23,11 +33,28 @@
     "init_milestones": [60, 120, 170],
 
     "epochs": 20,
+=======
+    "init_epoch": 1,
+    "init_lr": 0.1,
+    "init_lr_decay": 0.1,
+    "init_weight_decay": 5e-4,
+    "init_milestones": [60, 120, 170],
+
+    "epochs": 1,
+    "lrate_decay": 0.05,
+>>>>>>> 448282f1a4b7bdc51d905ba932172465507f731b
     "lrate": 0.01,
     "lrate_decay": 0.05,
     "weight_decay": 2e-4,
     "milestones": [60, 120, 170],
 
+<<<<<<< HEAD
     "teacher_epochs": 20,
     "temperature": 4
+=======
+    "teacher_epochs": 1,
+    "alpha": 0.95,
+    "temperature": 4,
+    "multiplier": 1.0
+>>>>>>> 448282f1a4b7bdc51d905ba932172465507f731b
 }
