@@ -20,8 +20,8 @@ class Encoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(Encoder, self).__init__()
         self.layer1 = nn.Linear(input_dim, hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU()
+        self.layer2 = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
         x = self.layer1(x)
@@ -53,8 +53,8 @@ class InterClassSeparationLoss(nn.Module):
         for i in range(self.num_classes):
             for j in range(i + 1, self.num_classes):
                 if count[i] > 0 and count[j] > 0:
-                    distance = torch.norm(centroids[i] - centroids[j])
-                    loss = loss + torch.exp(-4*(distance + self.eps))  # Maximize separation
+                    distance = torch.norm(centroids[i] - centroids[j]) / 16
+                    loss = loss + torch.exp(-(distance + self.eps))  # Maximize separation
         return loss
  
 class KDLoss(nn.KLDivLoss):
@@ -430,18 +430,18 @@ class Ours(BaseLearner):
                 c = encoder_for_student(student_feat) @ codebook
 
                 test_loss = myLoss2(torch.cat([a,b],dim=1), targets)
-                
+ 
                 if len(self._multiple_gpus) > 1:
                     student_logits_com = self._network.module.fc(c)["logits"]
                 else:
                     student_logits_com = self._network.fc(c)["logits"]
 
-                # loss_cls = F.cross_entropy(student_logits, targets)
+                loss_cls = F.cross_entropy(student_logits, targets)
                 loss_cls_com = F.cross_entropy(student_logits_com, targets)
 
                 loss_kd = kd_loss(student_logits, student_logits_com)
 
-                loss = loss_cls_com  + loss_kd + test_loss
+                loss = loss_cls +  0*loss_cls_com  + loss_kd + test_loss
 
                 optimizer.zero_grad()
                 loss.backward()
