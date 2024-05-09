@@ -428,14 +428,14 @@ class Ours(BaseLearner):
                     teacher_old_logits = self.teacher_model_old.fc(teacher_old_feat)["logits"]
 
 
-                com_old = encoder_for_old(teacher_old_feat) @ torch.t(encoder_for_student(student_feat))  # 63 128
-                com_new = encoder_for_new(teacher_new_feat) @ torch.t(encoder_for_student(student_feat))
-                com_student = torch.concat([com_old, com_new], dim=0) @ codebook
-                breakpoint()
+                # com_old = encoder_for_old(teacher_old_feat) @ torch.t(encoder_for_student(student_feat)) 
+                # com_new = encoder_for_new(teacher_new_feat) @ torch.t(encoder_for_student(student_feat))
+                # com_student = torch.concat([com_old, com_new], dim=0) @ codebook
 
-                # com_old = encoder_for_old(teacher_old_feat) @ codebook
-                # com_new = encoder_for_new(teacher_new_feat) @ codebook
-                # com_student = encoder_for_student(student_feat) @ codebook
+
+                com_old = encoder_for_old(teacher_old_feat) @ codebook
+                com_new = encoder_for_new(teacher_new_feat) @ codebook
+                com_student = encoder_for_student(student_feat) @ codebook
 
 
                 if len(self._multiple_gpus) > 1:

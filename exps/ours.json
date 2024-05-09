@@ -29,5 +29,5 @@
     "milestones": [60, 120, 170],
 
     "teacher_epochs": 20,
-    "temperature": 4
+    "temperature": 1
 }

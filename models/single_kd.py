@@ -46,19 +46,14 @@ class KDLoss(nn.KLDivLoss):
     def __init__(self, temperature, alpha=None, beta=None, reduction='batchmean', **kwargs):
         super().__init__(reduction=reduction)
         self.temperature = temperature
-        self.alpha = alpha
-        self.beta = 1 - alpha if beta is None else beta
         cel_reduction = 'mean' if reduction == 'batchmean' else reduction
         self.cross_entropy_loss = nn.CrossEntropyLoss(reduction=cel_reduction, **kwargs)
 
     def forward(self, student_logits, teacher_logits, targets=None, *args, **kwargs):
         soft_loss = super().forward(torch.log_softmax(student_logits / self.temperature, dim=1),
                                     torch.softmax(teacher_logits / self.temperature, dim=1))
-        if self.alpha is None or self.alpha == 0 or targets is None:
-            return soft_loss
 
-        hard_loss = self.cross_entropy_loss(student_logits, targets)
-        return self.alpha * hard_loss + self.beta * (self.temperature ** 2) * soft_loss
+        return soft_loss
     
 class DISTLoss(nn.Module):
     """
@@ -493,7 +488,8 @@ class SingleKD(BaseLearner):
                     loss_func = KDLoss(temperature=self.args["temperature"], alpha=None)
                     alpha = self.args["alpha"]
                     loss_kd = loss_func(logits_student, logits_teacher)
-                    loss = alpha*loss_cls + (1-alpha)*loss_kd
+                    # loss = alpha*loss_cls + (1-alpha)*loss_kd
+                    loss = loss_kd
                     if i == len(train_loader)-1:
                         print("epoch {}: {:.3f}|{:.3f}|{:.3f}|".format(epoch, loss, alpha*loss_cls, (1-alpha)*loss_kd))
                 elif self.args["mode"] == "DIST":
