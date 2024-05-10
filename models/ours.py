@@ -510,7 +510,7 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
-                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5)
+                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5, loss_cls)
 
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
