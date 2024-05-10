@@ -16,6 +16,31 @@ import os
 import copy
 import glob
 
+class DISTLoss(nn.Module):
+    def __init__(self, tau=1.0, eps=1e-8, **kwargs):
+        super().__init__()
+        self.tau = tau
+        self.eps = eps
+
+    @staticmethod
+    def cosine_similarity(a, b, eps=1e-8):
+        return (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1) + eps)
+    
+    def pearson_correlation(self,y_s, y_t, eps):
+        return self.cosine_similarity(y_s - y_s.mean(1).unsqueeze(1), y_t - y_t.mean(1).unsqueeze(1), eps=eps)
+
+    def inter_class_relation(self, y_s, y_t):
+        return 1 - self.pearson_correlation(y_s, y_t, self.eps).mean()
+
+    def intra_class_relation(self, y_s, y_t):
+        return self.inter_class_relation(y_s.transpose(0, 1), y_t.transpose(0, 1))
+
+    def forward(self, student_logits, teacher_logits, *args, **kwargs):
+        y_s = (student_logits / self.tau).softmax(dim=1)
+        y_t = (teacher_logits / self.tau).softmax(dim=1)
+        inter_loss = self.tau ** 2 * self.inter_class_relation(y_s, y_t)
+        return inter_loss
+    
 class Encoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(Encoder, self).__init__()
@@ -115,6 +140,19 @@ class Ours(BaseLearner):
         self.weight_decay = self.args["weight_decay"]
         self.milestones = self.args["milestones"]
 
+
+    def padding_old(self, old_logit):
+        #old logit = [old_samples, known_classes]
+        a = torch.zeros(size=(old_logit.shape[0], self._total_classes), device=self._device) # --> 0 for [old_samples, total_classes]
+        a[:, :self._known_classes] = old_logit
+        return a
+
+    def padding_new(self, new_logit):
+        #new logit = [new_samples, total_classes - known_classes]
+        a = torch.zeros(size=(new_logit.shape[0], self._total_classes), device=self._device) # --> 0 for [new_samples, total_classes]
+        a[:, self._known_classes:] = new_logit
+        return a
+    
     @staticmethod
     def print_loss(*args):
         for l in args:
@@ -271,7 +309,7 @@ class Ours(BaseLearner):
         sampler = torch.utils.data.sampler.WeightedRandomSampler(samples_weights, len(samples_weights), replacement=True)
         
         self.train_memory_loader = DataLoader(
-            train_memory_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=sampler
+            train_memory_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=sampler, drop_last=True
         )
 
         self._train(self.train_loader, self.test_loader)
@@ -401,13 +439,16 @@ class Ours(BaseLearner):
    
     def _update_representation(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(range(self.epochs))
-        codebook = torch.nn.Parameter(torch.randn(128,64)).to(self._device)
+        codebook = torch.nn.Parameter(torch.randn(size=(32,64))).to(self._device)
+        # codebook = torch.tensor([self.args["batch_size"], 64]).to(self._device)
         # codebook = torch.nn.Linear(self._total_classes,self._total_classes,True).to(self._device)
         kd_loss = KDLoss(temperature=self.args["temperature"])
+        dist_loss = DISTLoss()
+        mse_loss = nn.MSELoss()
         myLoss2 = InterClassSeparationLoss(self._total_classes, feature_dim=64*2)
-        encoder_for_student = Encoder(64, 64, 64).to(self._device)
-        encoder_for_old = Encoder(64, 64, 64).to(self._device)
-        encoder_for_new = Encoder(64, 64, 64).to(self._device)
+        encoder_for_student = Encoder(64, 64, 32).to(self._device)
+        encoder_for_old = Encoder(64, 64, 32).to(self._device)
+        encoder_for_new = Encoder(64, 64, 32).to(self._device)
 
 
         for _, epoch in enumerate(prog_bar):
@@ -419,55 +460,45 @@ class Ours(BaseLearner):
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
                 mask = targets < self._known_classes # set True for old data
-                # fake_targets = targets - self._known_classes
 
-                student_feat = self._network(inputs)["features"]
+                student_out = self._network(inputs)
+                student_feat = student_out["features"] # fmaps : [b, 16, 32, 32] features: [b, 64]
+                student_logits = student_out["logits"] # fmaps : [b, 16, 32, 32] features: [b, 64]
+
                 with torch.no_grad():
-                    teacher_old_feat = self.teacher_model_old(inputs[mask])["features"]
+                    teacher_old_feat = self.teacher_model_old(inputs[mask])["features"] 
+                    teacher_old_logit= self.teacher_model_old.fc(teacher_old_feat)["logits"]
                     teacher_new_feat = self.teacher_model_new(inputs[~mask])["features"]
-                    teacher_old_logits = self.teacher_model_old.fc(teacher_old_feat)["logits"]
-
-
-                com_old = encoder_for_old(teacher_old_feat) @ torch.t(encoder_for_student(student_feat))  # 63 128
-                com_new = encoder_for_new(teacher_new_feat) @ torch.t(encoder_for_student(student_feat))
-                com_student = torch.concat([com_old, com_new], dim=0) @ codebook
-                breakpoint()
-
-                # com_old = encoder_for_old(teacher_old_feat) @ codebook
-                # com_new = encoder_for_new(teacher_new_feat) @ codebook
-                # com_student = encoder_for_student(student_feat) @ codebook
-
-
-                if len(self._multiple_gpus) > 1:
-                    student_logits_com_old = self._network.module.fc(com_old)["logits"]
-                    student_logits_com_new = self._network.module.fc(com_new)["logits"]
-                    student_logits_com = self._network.module.fc(com_student)["logits"]
-                    student_logits = self._network.module.fc(student_feat)["logits"] # [batch, total_classes]
-                    with torch.no_grad():
-                        teacher_new_logits = self.teacher_model_new.module.fc(teacher_new_feat)["logits"]
-                else:
-                    student_logits_com_old = self._network.fc(com_old)["logits"]
-                    student_logits_com_new = self._network.fc(com_new)["logits"]
-                    student_logits_com = self._network.fc(com_student)["logits"]
-                    student_logits = self._network.fc(com_old)["logits"]
-                    with torch.no_grad():
-                        teacher_new_logits = self.teacher_model_new.fc(teacher_new_feat)["logits"]
-
-
-                loss_1 = kd_loss(student_logits_com_old[:, :self._known_classes], teacher_old_logits)
-                loss_2 = kd_loss(student_logits_com_new[:, self._known_classes:], teacher_new_logits)
-                # loss_cls_com = F.cross_entropy(student_logits_com, targets)
-                loss_3 = kd_loss(student_logits, student_logits_com)
-
-                # loss_a_cls = F.cross_entropy(student_logits_com_a, targets)
-                loss_cls = F.cross_entropy(student_logits, targets)
+                    teacher_new_logit= self.teacher_model_new.module.fc(teacher_new_feat)["logits"]
+                    # teacher_old_logit_preds = torch.argmax(teacher_old_logit, dim=1)
+                    # teacher_new_logit_preds = torch.argmax(teacher_new_logit, dim=1)
 
                 # loss_kd = kd_loss(student_logits, student_logits_com_c)
+                old_feat_com = encoder_for_old(teacher_old_feat) @ codebook  # --> [oldsamples, h]
+                new_feat_com = encoder_for_new(teacher_new_feat) @ codebook # --> [newsamples, h]
+                student_feat_com = encoder_for_student(student_feat) @ codebook
 
-                loss = loss_1 + loss_2 + loss_3 + loss_cls
+                old_logit_com = self._network.module.fc(old_feat_com)["logits"]
+                new_logit_com = self._network.module.fc(new_feat_com)["logits"]
+                student_logit_com = self._network.module.fc(student_feat_com)["logits"]
+                # old_logit_com_preds = torch.argmax(old_logit_com, dim=1)
+                # new_logit_com_preds = torch.argmax(new_logit_com, dim=1)
+
+                loss_1 = dist_loss(old_logit_com, self.padding_old(teacher_old_logit))
+                loss_2 = dist_loss(new_logit_com, self.padding_new(teacher_new_logit))
+                loss_5 = dist_loss(student_logit_com, torch.cat([old_logit_com, new_logit_com], dim=0))
+
+                
+                loss_3 = kd_loss(student_logits[mask] , old_logit_com)
+                loss_4 = kd_loss(student_logits[~mask], new_logit_com)
+
+                student_com_logits = self._network.module.fc(codebook)["logits"] # target
+                loss_cls = F.cross_entropy(student_logits, targets)
+
+                loss = loss_1+ loss_2  + loss_3 + loss_4 + loss_5 + loss_cls
 
                 optimizer.zero_grad()
-                loss.backward()
+                loss.backward(retain_graph=True)
                 optimizer.step()
                 losses += loss.item()
 
@@ -479,7 +510,7 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
-                self.print_loss(loss, loss_1, loss_2, loss_3, loss_cls)
+                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5)
 
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
