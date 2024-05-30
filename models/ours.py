@@ -12,10 +12,25 @@ from models.base import BaseLearner
 from utils.toolkit import target2onehot, tensor2numpy
 from torch.autograd import Variable
 import os
+import math
 
 import copy
 import glob
 
+
+class Codebook(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(Codebook, self).__init__()
+        # Define a parameter with the given shape
+        self.weight = nn.Parameter(torch.Tensor(input_dim, output_dim))
+        # Initialize the parameter using Xavier uniform initialization
+        # torch.nn.init.xavier_uniform_(self.weight)
+        torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+
+    def forward(self, x):
+        # Define the forward pass (for demonstration purposes, a simple linear transformation)
+        return torch.matmul(x, self.weight)
+    
 class DISTLoss(nn.Module):
     def __init__(self, tau=1.0, eps=1e-8, **kwargs):
         super().__init__()
@@ -32,9 +47,6 @@ class DISTLoss(nn.Module):
     def inter_class_relation(self, y_s, y_t):
         return 1 - self.pearson_correlation(y_s, y_t, self.eps).mean()
 
-    def intra_class_relation(self, y_s, y_t):
-        return self.inter_class_relation(y_s.transpose(0, 1), y_t.transpose(0, 1))
-
     def forward(self, student_logits, teacher_logits, *args, **kwargs):
         y_s = (student_logits / self.tau).softmax(dim=1)
         y_t = (teacher_logits / self.tau).softmax(dim=1)
@@ -42,45 +54,27 @@ class DISTLoss(nn.Module):
         return inter_loss
     
 class Encoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, layers, in_dim, hidden_dim, out_dim):
         super(Encoder, self).__init__()
-        self.layer1 = nn.Linear(input_dim, hidden_dim)
-        self.relu = nn.ReLU()
-        self.layer2 = nn.Linear(hidden_dim, output_dim)
-
+        self.dropout = 0.25
+        self.layers = layers
+        self.hidden_dim = hidden_dim
+        self.convs = torch.nn.ModuleList()
+        self.lin_in = torch.nn.Linear(in_dim, hidden_dim)
+        for i in range(self.layers - 1):
+            self.convs.append(
+                    torch.nn.Sequential(
+                        torch.nn.Linear(self.hidden_dim, self.hidden_dim),
+                        torch.nn.ReLU(),
+                        torch.nn.Dropout(self.dropout),
+                        # torch.nn.BatchNorm1d(self.hidden_dim),
+                    ))
+        self.lin_out = torch.nn.Linear(hidden_dim, out_dim)
     def forward(self, x):
-        x = self.layer1(x)
-        x = self.relu(x)
-        encoded = self.layer2(x)
-        return encoded
-    
-class InterClassSeparationLoss(nn.Module):
-    def __init__(self, num_classes, feature_dim):
-        super(InterClassSeparationLoss, self).__init__()
-        self.num_classes = num_classes
-        self.feature_dim = feature_dim
-        self.eps = 1e-8
-
-    def forward(self, features, labels):
-        # Initialize a centroid tensor
-        centroids = torch.zeros((self.num_classes, self.feature_dim), device=features.device)
-        count = torch.zeros(self.num_classes, device=features.device)
-
-        # Accumulate features for each class
-        for i in range(self.num_classes):
-            mask = (labels == i)
-            if torch.sum(mask) > 0:
-                centroids[i] = torch.mean(features[mask], dim=0)
-                count[i] = torch.sum(mask)
-
-        # Calculate distance between centroids
-        loss = 0
-        for i in range(self.num_classes):
-            for j in range(i + 1, self.num_classes):
-                if count[i] > 0 and count[j] > 0:
-                    distance = torch.norm(centroids[i] - centroids[j]) / 16
-                    loss = loss + torch.exp(-(distance + self.eps))  # Maximize separation
-        return loss
+        z = self.lin_in(x)
+        for conv in self.convs:
+            z = conv(z)
+        return self.lin_out(z)
  
 class KDLoss(nn.KLDivLoss):
     """
@@ -309,7 +303,7 @@ class Ours(BaseLearner):
         sampler = torch.utils.data.sampler.WeightedRandomSampler(samples_weights, len(samples_weights), replacement=True)
         
         self.train_memory_loader = DataLoader(
-            train_memory_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=sampler, drop_last=True
+            train_memory_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=sampler, drop_last=False
         )
 
         self._train(self.train_loader, self.test_loader)
@@ -439,16 +433,16 @@ class Ours(BaseLearner):
    
     def _update_representation(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(range(self.epochs))
-        codebook = torch.nn.Parameter(torch.randn(size=(32,64))).to(self._device)
+        # codebook = Codebook(self.args["com_dim"], self.args["enc_in_dim"]).to(self._device) 
+        # codebook = torch.nn.Parameter(torch.randn(size=(self.args["com_dim"],64))).to(self._device)
         # codebook = torch.tensor([self.args["batch_size"], 64]).to(self._device)
-        # codebook = torch.nn.Linear(self._total_classes,self._total_classes,True).to(self._device)
+        old_w = torch.nn.Linear(64, 64, True).to(self._device)
+        new_w = torch.nn.Linear(64, 64, True).to(self._device)
+        student_w = torch.nn.Linear(64, 64, True).to(self._device)
         kd_loss = KDLoss(temperature=self.args["temperature"])
-        dist_loss = DISTLoss()
-        mse_loss = nn.MSELoss()
-        myLoss2 = InterClassSeparationLoss(self._total_classes, feature_dim=64*2)
-        encoder_for_student = Encoder(64, 64, 32).to(self._device)
-        encoder_for_old = Encoder(64, 64, 32).to(self._device)
-        encoder_for_new = Encoder(64, 64, 32).to(self._device)
+        dist_loss = DISTLoss(self.args["temperature"])
+        temperature = torch.nn.Parameter(torch.ones(1)).to(self._device)
+        fc = torch.nn.Linear(1, self._total_classes, True).to(self._device)
 
 
         for _, epoch in enumerate(prog_bar):
@@ -462,43 +456,36 @@ class Ours(BaseLearner):
                 mask = targets < self._known_classes # set True for old data
 
                 student_out = self._network(inputs)
-                student_feat = student_out["features"] # fmaps : [b, 16, 32, 32] features: [b, 64]
-                student_logits = student_out["logits"] # fmaps : [b, 16, 32, 32] features: [b, 64]
+                student_feat = student_out["features"]
+                student_logits = student_out["logits"]
 
                 with torch.no_grad():
-                    teacher_old_feat = self.teacher_model_old(inputs[mask])["features"] 
+                    teacher_old_feat = self.teacher_model_old(inputs)["features"] 
                     teacher_old_logit= self.teacher_model_old.fc(teacher_old_feat)["logits"]
-                    teacher_new_feat = self.teacher_model_new(inputs[~mask])["features"]
+                    teacher_new_feat = self.teacher_model_new(inputs)["features"]
                     teacher_new_logit= self.teacher_model_new.module.fc(teacher_new_feat)["logits"]
-                    # teacher_old_logit_preds = torch.argmax(teacher_old_logit, dim=1)
-                    # teacher_new_logit_preds = torch.argmax(teacher_new_logit, dim=1)
 
-                # loss_kd = kd_loss(student_logits, student_logits_com_c)
-                old_feat_com = encoder_for_old(teacher_old_feat) @ codebook  # --> [oldsamples, h]
-                new_feat_com = encoder_for_new(teacher_new_feat) @ codebook # --> [newsamples, h]
-                student_feat_com = encoder_for_student(student_feat) @ codebook
+                student = torch.nn.functional.normalize(student_w(student_feat),2,dim=1)
+                old = torch.nn.functional.normalize(old_w(teacher_old_feat),2,dim=1)
+                new = torch.nn.functional.normalize(new_w(teacher_new_feat),2,dim=1)
+                logits =(old @ new.t()) * torch.exp(temperature)
+                labels = torch.arange(0,inputs.shape[0]).to(self._device)
+                loss_2 = F.cross_entropy(logits, labels)
+                loss_1 = F.cross_entropy(logits.t(), labels)
+                loss_12 = (loss_1 + loss_2) / 2.
 
-                old_logit_com = self._network.module.fc(old_feat_com)["logits"]
-                new_logit_com = self._network.module.fc(new_feat_com)["logits"]
-                student_logit_com = self._network.module.fc(student_feat_com)["logits"]
-                # old_logit_com_preds = torch.argmax(old_logit_com, dim=1)
-                # new_logit_com_preds = torch.argmax(new_logit_com, dim=1)
+                logits_diag = torch.diag(logits, 0)
 
-                loss_1 = dist_loss(old_logit_com, self.padding_old(teacher_old_logit))
-                loss_2 = dist_loss(new_logit_com, self.padding_new(teacher_new_logit))
-                loss_5 = dist_loss(student_logit_com, torch.cat([old_logit_com, new_logit_com], dim=0))
+                logits_diag_c = fc(logits_diag.unsqueeze(1))
+                loss_3 = F.cross_entropy(logits_diag_c, targets)
 
-                
-                loss_3 = kd_loss(student_logits[mask] , old_logit_com)
-                loss_4 = kd_loss(student_logits[~mask], new_logit_com)
+                loss_4 = kd_loss(student_logits, logits_diag_c)
 
-                student_com_logits = self._network.module.fc(codebook)["logits"] # target
                 loss_cls = F.cross_entropy(student_logits, targets)
-
-                loss = loss_1+ loss_2  + loss_3 + loss_4 + loss_5 + loss_cls
+                loss = loss_12 + loss_3 + loss_cls + loss_4
 
                 optimizer.zero_grad()
-                loss.backward(retain_graph=True)
+                loss.backward()
                 optimizer.step()
                 losses += loss.item()
 
@@ -510,7 +497,7 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
-                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5, loss_cls)
+                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_cls)
 
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,

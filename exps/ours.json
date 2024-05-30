@@ -6,7 +6,8 @@
     "memory_per_class": 20,
 
     "use_pretrained": true,
-    "pretrained": ["mnist_resnet20_task0_epoch1_tstacc_99.35.pth", "mnist_resnet20_task1_epoch1_tstacc_99.75.pth", "mnist_resnet20_task2_epoch1_tstacc_99.65.pth", "mnist_resnet20_task3_epoch1_tstacc_95.50.pth", "mnist_resnet20_task4_epoch1_tstacc_99.35.pth"],
+    "pretrained": ["mnist_resnet20_task0_epoch1_tstacc_99.35.pth", "mnist_resnet20_task1_epoch1_tstacc_99.75.pth", "mnist_resnet20_task2_epoch1_tstacc_99.65.pth", "mnist_resnet20_task3_epoch20_tstacc_99.30.pth", "mnist_resnet20_task4_epoch1_tstacc_99.35.pth"],
+
     "shuffle": true,
     "init_cls": 2,
     "increment": 2,
@@ -22,12 +23,17 @@
     "init_weight_decay": 2e-4,
     "init_milestones": [60, 120, 170],
 
-    "epochs": 20,
+    "epochs": 5,
     "lrate": 0.01,
     "lrate_decay": 0.05,
     "weight_decay": 2e-4,
     "milestones": [60, 120, 170],
 
     "teacher_epochs": 20,
-    "temperature": 1
+    "temperature": 4,
+
+    "enc_layers" : 1,
+    "enc_in_dim": 64,
+    "enc_hidden" : 64,
+    "com_dim" : 32
 }

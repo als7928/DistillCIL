@@ -438,7 +438,7 @@ class Ours(BaseLearner):
         # codebook = torch.tensor([self.args["batch_size"], 64]).to(self._device)
         # codebook = torch.nn.Linear(self._total_classes,self._total_classes,True).to(self._device)
         kd_loss = KDLoss(temperature=self.args["temperature"])
-        dist_loss = DISTLoss()
+        dist_loss = DISTLoss(self.args["temperature"])
         encoder_for_old = Encoder(self.args["enc_layers"], self.args["enc_in_dim"], self.args["enc_hidden"], self.args["com_dim"]).to(self._device)
         encoder_for_new = Encoder(self.args["enc_layers"], self.args["enc_in_dim"], self.args["enc_hidden"], self.args["com_dim"]).to(self._device)
         encoder_for_studnet = Encoder(self.args["enc_layers"], self.args["enc_in_dim"], self.args["enc_hidden"], self.args["com_dim"]).to(self._device)
@@ -474,19 +474,18 @@ class Ours(BaseLearner):
 
                 loss_1 = dist_loss(old_logit_com, self.padding_old(teacher_old_logit))
                 loss_2 = dist_loss(new_logit_com, self.padding_new(teacher_new_logit))
-                
-                # loss_4 = kd_loss(torch.cat([student_logit_com[mask],student_logit_com[~mask]],dim=0), torch.cat([old_logit_com, new_logit_com],dim=0))
-                loss_3 = kd_loss(student_logits[mask] , old_logit_com)
-                loss_4 = kd_loss(student_logits[~mask], new_logit_com)
+                loss_cls_old = F.cross_entropy(old_logit_com, targets[mask])
+                loss_cls_new = F.cross_entropy(new_logit_com, targets[~mask])
+
+                loss_3 = kd_loss(student_logit_com[mask] , old_logit_com)
+                loss_4 = kd_loss(student_logit_com[~mask], new_logit_com)
             
-                # loss_a = dist_loss(student_logit_com[mask], old_logit_com)
-                # loss_b = dist_loss(student_logit_com[~mask], new_logit_com)
-
                 loss_5 = kd_loss(student_logits , student_logit_com)
-                # loss_4 = kd_loss(student_logits[~mask], new_logit_com)
                 loss_cls = F.cross_entropy(student_logits, targets)
+                
+                # loss_cls = F.cross_entropy(student_logits, targets)
 
-                loss = loss_1+ loss_2  + loss_3  + loss_4 + loss_5 +loss_cls
+                loss = loss_1+ loss_2  + loss_3  + loss_4 + loss_5 + loss_cls_old + loss_cls_new + loss_cls
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -501,7 +500,7 @@ class Ours(BaseLearner):
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             if epoch % 1 == 0: # edited
                 test_acc = self._compute_accuracy(self._network, test_loader)
-                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5, loss_cls)
+                self.print_loss(loss, loss_1, loss_2, loss_3, loss_4, loss_5, loss_cls_old, loss_cls_new, loss_cls)
 
                 info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
                     self._cur_task,
