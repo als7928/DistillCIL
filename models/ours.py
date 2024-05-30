@@ -489,6 +489,7 @@ class Ours(BaseLearner):
                 optimizer.step()
                 losses += loss.item()
 
+                
                 _, preds = torch.max(student_logits, dim=1)
                 correct += preds.eq(targets.expand_as(preds)).cpu().sum()
                 total += len(targets)
