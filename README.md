@@ -12,8 +12,8 @@
 <img src="./assets/5.png" alt="abc" height="380" style="vertical-align:middle">
 </center>
 
-- [Run](#run-experiment)
 - [Installation](#installation)
+- [Run](#run-experiment)
 - [Results](#results)
 
 
