@@ -4,6 +4,10 @@ import torch
 import  json
 from enum import Enum
 
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 class ConfigEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, type):
@@ -38,6 +42,22 @@ def makedirs(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
+def accuracy_per_class(y_pred, y_true):
+    assert len(y_pred) == len(y_true), "Data length error."
+    acc_per_class = {}
+
+    # per_class (by datamanager)
+    for class_id in range(0, np.max(y_true) + 1, 1):
+        idxes = np.where(
+            np.logical_and(y_true >= class_id, y_true < class_id + 1)
+        )[0]
+        label = "{}".format(
+            str(class_id).rjust(2, "0")
+        )
+        acc_per_class[label] = np.around(
+            (y_pred[idxes] == y_true[idxes]).sum() * 100 / len(idxes), decimals=2
+        )
+    return acc_per_class
 
 def accuracy(y_pred, y_true, nb_old, increment=10):
     assert len(y_pred) == len(y_true), "Data length error."
@@ -47,7 +67,7 @@ def accuracy(y_pred, y_true, nb_old, increment=10):
     )
 
     # Grouped accuracy
-    for class_id in range(0, np.max(y_true), increment):
+    for class_id in range(0, np.max(y_true) + 1, increment):
         idxes = np.where(
             np.logical_and(y_true >= class_id, y_true < class_id + increment)
         )[0]
@@ -109,3 +129,51 @@ def save_model(args, model):
     else:
         weight = model._network.cpu()
     torch.save(weight, _path)
+
+
+def draw_cnn(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='result'):
+
+    f, axs = plt.subplots(len(ylabel), 1, gridspec_kw={'hspace': 0}, sharex=True,figsize=(len(xlabel),len(ylabel)))
+    for i in range(len(ylabel)):
+        hh = np.expand_dims(data[i],0)
+        mask = np.logical_not(hh>0)
+        yl = y_prefix + str(ylabel[i])
+        xl = [x_prefix+x for x in xlabel]
+        ax=sns.heatmap(hh, annot=True,vmin=0, vmax=100, linewidth=.5,fmt=".0f", cmap="RdYlGn", square=True,  cbar=False, ax=axs[i], center=hh[0,i], xticklabels=xl, yticklabels=[yl],mask=mask)
+
+        ax.tick_params(axis='both', which='both', length=3)
+        # ax.set(xlabel="Episode", ylabel="")
+        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+        # ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    # ax.tick_params(top=True, labeltop=True,bottom=False, labelbottom=False)
+    figure = ax.get_figure()    
+    figure.savefig(fname+'.pdf', dpi=800, format='pdf')
+    plt.cla()
+    plt.clf()
+
+def draw_cls(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='result'):
+
+    f, axs = plt.subplots(1, len(xlabel), gridspec_kw={'hspace': 0, 'wspace':0}, sharey=True,figsize=(len(xlabel),len(ylabel)))
+    for i in range(len(xlabel)):
+        hh = np.expand_dims(data[:,i],1)
+        for j in range(hh.shape[0]):
+            if hh[j,0]>0:
+                fwd_idx=j
+                break
+        mask = np.logical_not(hh>0)
+        xl = x_prefix + str(xlabel[i])
+        yl = [y_prefix+y for y in ylabel] 
+        ax=sns.heatmap(hh, annot=True,vmin=0, vmax=100, linewidth=.5,fmt=".0f", cmap="RdYlGn", square=True,  cbar=False, center=hh[fwd_idx,0], ax=axs[i], xticklabels=[xl], yticklabels=yl,mask=mask)
+
+        ax.set(xlabel="", ylabel="")
+        if i>0:
+            ax.tick_params(axis='y', which='both', length=0)
+        else:
+            ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+        ax.tick_params(top=True, labeltop=True,bottom=False, labelbottom=False)
+        # ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+        
+    figure = ax.get_figure()    
+    figure.savefig(fname+'.pdf', dpi=800, format='pdf')
+    plt.cla()
+    plt.clf()

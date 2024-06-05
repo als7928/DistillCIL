@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from utils.toolkit import tensor2numpy, accuracy
+from utils.toolkit import tensor2numpy, accuracy, accuracy_per_class
 from scipy.spatial.distance import cdist
 import os
 
@@ -21,8 +21,10 @@ class BaseLearner(object):
         self._network = None
         self._old_network = None
         self._data_memory, self._targets_memory = np.array([]), np.array([])
-        self.topk = 1
-        # self.topk = 5
+        if self.args["init_cls"] >= 5:
+            self.topk = 5
+        else:
+            self.topk = 1
         self._memory_size = 1
         self._memory_per_class = None
         self._fixed_memory = False
@@ -71,14 +73,16 @@ class BaseLearner(object):
 
     def _evaluate(self, y_pred, y_true):
         ret = {}
-        grouped = accuracy(y_pred.T[0], y_true, self._known_classes)
+        # grouped = accuracy(y_pred.T[0], y_true, self._known_classes)
+        grouped = accuracy(y_pred.T[0], y_true, self._known_classes, increment=self.args["increment"])
+        per_class = accuracy_per_class(y_pred.T[0], y_true)
+        ret["per_class"] = per_class
         ret["grouped"] = grouped
         ret["top1"] = grouped["total"]
         ret["top{}".format(self.topk)] = np.around(
             (y_pred.T == np.tile(y_true, (self.topk, 1))).sum() * 100 / len(y_true),
             decimals=2,
         )
-
         return ret
 
     def eval_task(self, save_conf=False):

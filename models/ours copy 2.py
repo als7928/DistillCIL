@@ -485,7 +485,7 @@ class Ours(BaseLearner):
                 
                 # loss_cls = F.cross_entropy(student_logits, targets)
 
-                loss = loss_1+ loss_2  + loss_3  + loss_4 + loss_5 + loss_cls_old + loss_cls_new + loss_cls
+                loss = loss_1+ loss_2  + loss_3  + loss_4 + loss_5 + 0*(loss_cls_old + loss_cls_new + loss_cls)
 
                 optimizer.zero_grad()
                 loss.backward()
