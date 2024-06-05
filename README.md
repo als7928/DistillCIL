@@ -11,6 +11,7 @@
 <center>
 <img src="./assets/5.png" alt="abc" height="380" style="vertical-align:middle">
 </center>
+Abstract
 
 - [Installation](#installation)
 - [Run](#run-experiment)
@@ -37,6 +38,7 @@ python main.py --config ./exps/ours.json
 ******
 
 ### Results
+Results will be saved in `logs/Ours/$dataset$/$InitTasks-Increment$/$Increment$/` for each episode.
 **MNIST-5tasks**
 <center>
 <img src="./assets/3.png" alt="abc" height="380" style="vertical-align:middle">
