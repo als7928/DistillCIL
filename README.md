@@ -1,9 +1,17 @@
-# Class-Incremental Learning with Knowledge Distillation
+# Class-Incremental Learning with Multi-Teacher Knowledge Distillation
+
+<center>
+<img src="./assets/4.png" alt="abc" height="380" style="vertical-align:middle">
+</center>
+
 **Soft computing lab**
-Implementation for Continual learning via Knowledge Distillation
+---
 
+<strong> Implementation for Class-Incremental Learning with Multi-Teacher Knowledge Distillation </strong>
+<center>
+<img src="./assets/5.png" alt="abc" height="380" style="vertical-align:middle">
+</center>
 
-****
 - [Run](#run-experiment)
 - [Installation](#installation)
 - [Results](#results)
@@ -13,7 +21,6 @@ Implementation for Continual learning via Knowledge Distillation
 
 
 ### Installation
----
 **Dependencies**
 * Python 3.8
 * torch 1.8.1
@@ -26,14 +33,12 @@ Implementation for Continual learning via Knowledge Distillation
 
 
 ### Run
----
 ```
 python main.py --config ./exps/ours.json
 ```
 ******
 
 ### Results
----
 **MNIST-5tasks**
 <center>
 <img src="./assets/3.png" alt="abc" height="380" style="vertical-align:middle"> <br> Average accuracy
