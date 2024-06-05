@@ -38,7 +38,7 @@ python main.py --config ./exps/ours.json
 ******
 
 ### Results
-Results will be saved in `logs/Ours/$dataset$/$InitTasks-Increment$/$Increment$/` for each episode.
+Results will be saved in `logs/Ours/$dataset$/$InitTasks-Increment$/$Increment$/$prefix$_$seed$_$backbone$_*` for each episode.
 **MNIST-5tasks**
 <center>
 <img src="./assets/3.png" alt="abc" height="380" style="vertical-align:middle">
