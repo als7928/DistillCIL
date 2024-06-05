@@ -87,7 +87,7 @@ def _train(args):
         start = time.perf_counter()
         cnn_accy, nme_accy = model.eval_task()
         end = time.perf_counter()
-        logging.info("Training duration: {}".format(end-start))
+        logging.info("Eval duration: {}".format(end-start))
         eval_duration.append(end-start)
 
         model.after_task()
