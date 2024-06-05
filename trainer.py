@@ -66,6 +66,7 @@ def _train(args):
 
     cnn_matrix, nme_matrix = [], []
     cls_matrix = []
+    train_duration, eval_duration = [], []
 
     tm = time.localtime(time.time())
     starttime = time.strftime("%m%d_%H%M%S",tm)
@@ -80,9 +81,16 @@ def _train(args):
         start = time.perf_counter()
         model.incremental_train(data_manager)
         end = time.perf_counter()
-        cnn_accy, nme_accy = model.eval_task()
-        model.after_task()
         logging.info("Training duration: {}".format(end-start))
+        train_duration.append(end-start)
+        
+        start = time.perf_counter()
+        cnn_accy, nme_accy = model.eval_task()
+        end = time.perf_counter()
+        logging.info("Training duration: {}".format(end-start))
+        eval_duration.append(end-start)
+
+        model.after_task()
         if nme_accy is not None:
             logging.info("CNN: {}".format(cnn_accy["grouped"]))
             logging.info("NME: {}".format(nme_accy["grouped"]))
@@ -183,6 +191,9 @@ def _train(args):
         print(np_acctable)
         print('Forgetting (NME):', forgetting)
         logging.info('Forgetting (NME): {}'.format(forgetting))
+
+    logging.info("{Total training duration}".format(sum(train_duration)))
+    logging.info("{Total eval duration}".format(sum(eval_duration)))
 
 def _set_device(args):
     device_type = args["device"]
