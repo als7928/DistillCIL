@@ -4,10 +4,12 @@
 <img src="./assets/fig1.png" alt="fig" height="120" style="vertical-align:middle">
 <img src="./assets/fig2.png" alt="fig" height="200" style="vertical-align:middle">
 </center>
+
 ---
 <center>
 <img src="./assets/fig3.png" alt="fig" height="380" style="vertical-align:middle">
 </center>
+
 **Soft computing lab**
 ---
 
