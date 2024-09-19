@@ -40,13 +40,3 @@ Abstract
 python main.py --config ./exps/ours.json
 ```
 ******
-
-### Results
-Results will be saved in `logs/Ours/$dataset$/$InitTasks-Increment$/$Increment$/$prefix$_$seed$_$backbone$_*` for each episode.
-**MNIST-5tasks**
-
-<center>Average accuracy</center>
-
-|![](./assets/1.png)|![](./assets/2.png)|
-|:---:|:---:|
-|Test accuracy|Class accuracy|
