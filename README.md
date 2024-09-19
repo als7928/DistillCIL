@@ -1,7 +1,7 @@
 # Class-Incremental Learning with Multi-Teacher Knowledge Distillation
 
 <center>
-<img src="./assets/4.png" alt="abc" height="380" style="vertical-align:middle">
+<img src="./assets/fig1.png" alt="fig" height="380" style="vertical-align:middle">
 </center>
 
 **Soft computing lab**
@@ -9,7 +9,7 @@
 
 <strong> Implementation for Class-Incremental Learning with Multi-Teacher Knowledge Distillation </strong>
 <center>
-<img src="./assets/5.png" alt="abc" height="380" style="vertical-align:middle">
+<img src="./assets/fig2.png" alt="fig" height="380" style="vertical-align:middle">
 </center>
 Abstract
 
@@ -41,7 +41,7 @@ python main.py --config ./exps/ours.json
 Results will be saved in `logs/Ours/$dataset$/$InitTasks-Increment$/$Increment$/$prefix$_$seed$_$backbone$_*` for each episode.
 **MNIST-5tasks**
 <center>
-<img src="./assets/3.png" alt="abc" height="380" style="vertical-align:middle">
+<img src="./assets/fig3.png" alt="fig" height="380" style="vertical-align:middle">
 </center>
 <center>Average accuracy</center>
 
