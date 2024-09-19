@@ -16,14 +16,14 @@
     "mode": "Vanila",
 
     "teacher_convnet_type": "resnet20",
-    "teacher_epochs": 1,
+    "teacher_epochs": 5,
     "teacher_lrate": 0.1,
     "teacher_lrate_decay": 0.1,
     "teacher_weight_decay": 5e-4,
     "teacher_milestones": [60, 120, 170],
 
     "convnet_type": "resnet20",
-    "init_epoch": 10,
+    "init_epoch": 5,
     "init_lr": 0.1,
     "init_lr_decay": 0.1,
     "init_weight_decay": 5e-4,

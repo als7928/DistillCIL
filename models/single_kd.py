@@ -393,8 +393,8 @@ class SingleKD(BaseLearner):
     
     def incremental_train(self, data_manager):
         self._cur_task += 1
-        if self._cur_task > 0:
-            return
+        # if self._cur_task > 0:
+        #     return
 
         self._total_classes = self._known_classes + data_manager.get_task_size(
             self._cur_task

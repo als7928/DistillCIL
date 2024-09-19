@@ -94,7 +94,7 @@ def _train(args):
         if nme_accy is not None:
             logging.info("CNN: {}".format(cnn_accy["grouped"]))
             logging.info("NME: {}".format(nme_accy["grouped"]))
-            logging.info("CLS: {}".format(cnn_accy["per_class"]))
+            logging.info("CLS: {}".format(nme_accy["per_class"]))
 
             cnn_keys = [key for key in cnn_accy["grouped"].keys() if '-' in key]
             cnn_keys_sorted = sorted(cnn_keys)
@@ -106,9 +106,9 @@ def _train(args):
             nme_values = [nme_accy["grouped"][key] for key in nme_keys_sorted]
             nme_matrix.append(nme_values)
 
-            cls_keys = [key for key in cnn_accy["per_class"].keys()]
+            cls_keys = [key for key in nme_accy["per_class"].keys()]
             cls_keys_sorted = sorted(cls_keys)
-            cls_values = [cnn_accy["per_class"][key] for key in cls_keys_sorted]
+            cls_values = [nme_accy["per_class"][key] for key in cls_keys_sorted]
             cls_matrix.append(cls_values)
 
             cnn_curve["top1"].append(cnn_accy["top1"])
@@ -161,7 +161,7 @@ def _train(args):
             for idxx, line in enumerate(cls_matrix):
                 idxy = len(line)
                 np_acctable[idxx, :idxy] = np.array(line)
-            print('Class Accuracy Matrix (CLS):')
+            print('Class Accuracy Matrix-NME (CLS):')
             print(np_acctable)
             tlabel = [str(i) for i in range(data_manager.nb_tasks)]
             draw_cls(np_acctable, data_manager._class_order, tlabel, y_prefix="episode_", x_prefix="class_",fname=logfilename+"_"+starttime+"_cls")
@@ -192,8 +192,8 @@ def _train(args):
         print('Forgetting (NME):', forgetting)
         logging.info('Forgetting (NME): {}'.format(forgetting))
 
-    logging.info("{Total training duration}".format(sum(train_duration)))
-    logging.info("{Total eval duration}".format(sum(eval_duration)))
+    logging.info("Total training duration: {}".format(sum(train_duration)))
+    logging.info("Total eval duration: {}".format(sum(eval_duration)))
 
 def _set_device(args):
     device_type = args["device"]

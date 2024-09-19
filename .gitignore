@@ -2,3 +2,8 @@ data/
 __pycache__/
 logs/
 pretrained/
+data/
+exps/
+*.pkl
+*.bash
+*.png

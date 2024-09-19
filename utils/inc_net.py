@@ -13,6 +13,7 @@ from convs.modified_represnet import resnet18_rep,resnet34_rep
 from convs.resnet_cbam import resnet18_cbam,resnet34_cbam,resnet50_cbam
 from convs.memo_resnet import  get_resnet18_imagenet as get_memo_resnet18 #for MEMO imagenet
 from convs.memo_cifar_resnet import get_resnet32_a2fc as get_memo_resnet32 #for MEMO cifar
+import numpy as np
 
 def get_convnet(args, pretrained=False):
     name = args["convnet_type"].lower()
@@ -837,3 +838,116 @@ class AdaptiveNet(nn.Module):
         self.fc.load_state_dict(model_infos['fc'])
         test_acc = model_infos['test_acc']
         return test_acc
+
+    
+    
+class OurNet(BaseNet):
+    def __init__(self, args, pretrained, gradcam=False):
+        super().__init__(args, pretrained)
+        self.gradcam = gradcam
+        if hasattr(self, "gradcam") and self.gradcam:
+            self._gradcam_hooks = [None, None]
+            self.set_gradcam_hook()
+
+        self.args = args
+        self.known_classes = 0
+        self.total_classes = 0
+        self.device = None
+
+    def padding_old(self, old_logit):
+        #old logit = [old_samples, known_classes]
+        a = torch.ones(size=(old_logit.shape[0], self.total_classes), device = self.device) # --> 0 for [old_samples, total_classes]
+        a = a * -8
+        a[:, :self.known_classes] = old_logit
+        return a
+
+    def padding_new(self, new_logit):
+        #new logit = [new_samples, total_classes - known_classes]
+        a = torch.ones(size=(new_logit.shape[0], self.total_classes), device = self.device) # --> 0 for [new_samples, total_classes]
+        a = a * -8
+        a[:, self.known_classes:] = new_logit
+        return a
+    
+
+    def generate_fc_old(self, old_fc):
+        fc = self.generate_fc(self.feature_dim, self.known_classes)
+        fc.weight.data = copy.deepcopy(old_fc.fc.weight.data)
+        fc.bias.data = copy.deepcopy(old_fc.fc.bias.data)
+        fc.requires_grad = False
+        self.fc_for_old = fc
+    
+    def generate_fc_new(self, new_fc): 
+        fc = self.generate_fc(self.feature_dim, self.total_classes-self.known_classes)
+        fc.weight.data = copy.deepcopy(new_fc.fc.weight.data)
+        fc.bias.data = copy.deepcopy(new_fc.fc.bias.data)
+        fc.requires_grad = False
+
+        self.fc_for_new = fc
+
+    def unfreeze(self):
+        for param in self.parameters():
+            param.requires_grad = True
+            
+    def update_fc(self, nb_classes):
+        fc = self.generate_fc(self.feature_dim, nb_classes)
+        if self.fc is not None:
+            nb_output = self.fc.out_features
+            weight = copy.deepcopy(self.fc.weight.data)
+            bias = copy.deepcopy(self.fc.bias.data)
+            fc.weight.data[:nb_output] = weight
+            fc.bias.data[:nb_output] = bias
+
+        del self.fc
+        self.fc = fc
+
+    # def weight_align(self, increment):
+    #     weights = self.fc.weight.data
+    #     newnorm = torch.norm(weights[-increment:, :], p=2, dim=1)
+    #     oldnorm = torch.norm(weights[:-increment, :], p=2, dim=1)
+    #     meannew = torch.mean(newnorm)
+    #     meanold = torch.mean(oldnorm)
+    #     gamma = meanold / meannew
+    #     print("alignweights,gamma=", gamma)
+    #     self.fc.weight.data[-increment:, :] *= gamma
+
+    def generate_fc(self, in_dim, out_dim):
+        fc = SimpleLinear(in_dim, out_dim)
+
+        return fc
+
+    def forward(self, x):
+        x = self.convnet(x)
+        feat = x["features"]
+        out = self.fc(feat)
+        out.update(x)
+
+        if hasattr(self, "gradcam") and self.gradcam:
+            out["gradcam_gradients"] = self._gradcam_gradients
+            out["gradcam_activations"] = self._gradcam_activations
+
+        return out
+
+    def unset_gradcam_hook(self):
+        self._gradcam_hooks[0].remove()
+        self._gradcam_hooks[1].remove()
+        self._gradcam_hooks[0] = None
+        self._gradcam_hooks[1] = None
+        self._gradcam_gradients, self._gradcam_activations = [None], [None]
+
+    def set_gradcam_hook(self):
+        self._gradcam_gradients, self._gradcam_activations = [None], [None]
+
+        def backward_hook(module, grad_input, grad_output):
+            self._gradcam_gradients[0] = grad_output[0]
+            return None
+
+        def forward_hook(module, input, output):
+            self._gradcam_activations[0] = output
+            return None
+
+        self._gradcam_hooks[0] = self.convnet.last_conv.register_backward_hook(
+            backward_hook
+        )
+        self._gradcam_hooks[1] = self.convnet.last_conv.register_forward_hook(
+            forward_hook
+        )

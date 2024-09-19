@@ -1,14 +1,14 @@
 {
-    "prefix": "reproduce",
-    "dataset": "cifar100",
+    "prefix": "train",
+    "dataset": "mnist",
     "memory_size": 2000,
-    "memory_per_class": 20,
+    "memory_per_class": 1,
     "fixed_memory": false,
     "shuffle": true,
-    "init_cls": 10,
-    "increment": 10,
+    "init_cls": 2,
+    "increment": 2,
     "model_name": "icarl",
-    "convnet_type": "resnet32",
+    "convnet_type": "resnet20",
     "device": ["0","1","2","3"],
     "seed": [1993]
 }

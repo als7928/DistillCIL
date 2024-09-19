@@ -136,7 +136,7 @@ def draw_cnn(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='r
     f, axs = plt.subplots(len(ylabel), 1, gridspec_kw={'hspace': 0}, sharex=True,figsize=(len(xlabel),len(ylabel)))
     for i in range(len(ylabel)):
         hh = np.expand_dims(data[i],0)
-        mask = np.logical_not(hh>0)
+        mask = np.logical_not(hh>=0)
         yl = y_prefix + str(ylabel[i])
         xl = [x_prefix+x for x in xlabel]
         ax=sns.heatmap(hh, annot=True,vmin=0, vmax=100, linewidth=.5,fmt=".0f", cmap="RdYlGn", square=True,  cbar=False, ax=axs[i], center=hh[0,i], xticklabels=xl, yticklabels=[yl],mask=mask)
@@ -147,9 +147,11 @@ def draw_cnn(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='r
         # ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
     # ax.tick_params(top=True, labeltop=True,bottom=False, labelbottom=False)
     figure = ax.get_figure()    
+    figure.savefig(fname+'.png', dpi=800, format='png')
     figure.savefig(fname+'.pdf', dpi=800, format='pdf')
     plt.cla()
     plt.clf()
+    plt.close()
 
 def draw_cls(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='result'):
 
@@ -174,6 +176,59 @@ def draw_cls(data, xlabel, ylabel, x_prefix='class_', y_prefix='task_', fname='r
         # ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
         
     figure = ax.get_figure()    
+    figure.savefig(fname+'.png', dpi=800, format='png')
     figure.savefig(fname+'.pdf', dpi=800, format='pdf')
     plt.cla()
     plt.clf()
+    plt.close()
+
+
+def t_sne_train(features1_epoch, labels1, features2_epoch, labels2, fname):
+    from sklearn.manifold import TSNE
+    plt.style.use(['seaborn-paper'])
+    tsne = TSNE(n_components=2, random_state=0)
+    cat = features1_epoch+features2_epoch
+    labels = labels1 + labels2
+
+    cluster = np.array(tsne.fit_transform(np.array(cat)))
+    labels = np.array(labels)
+    # labels2 = np.array(labels2)
+    plt.figure(figsize=(10, 10))
+    cifar = ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+    order = [4, 2, 7, 6, 0, 3, 5, 8, 9, 1]
+    # order = [i - 1 for i in order]
+    cifar = [cifar[i] for i in order]
+
+    for i, label in zip(range(10), cifar):
+        idx = np.where(labels == i)
+        plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
+
+    plt.legend()
+    plt.savefig(fname)
+    plt.cla()
+    plt.clf()
+    plt.close()
+
+
+
+def t_sne_test(features1_epoch, labels_epoch, fname):
+    from sklearn.manifold import TSNE
+    plt.style.use(['seaborn-paper'])
+    tsne = TSNE(n_components=2, random_state=0)
+    cluster = np.array(tsne.fit_transform(np.array(features1_epoch)))
+    labels_epoch = np.array(labels_epoch)
+    plt.figure(figsize=(10, 10))
+    cifar = ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+    order = [4, 2, 7, 6, 0, 3, 5, 8, 9, 1]
+    # order = [i - 1 for i in order]
+    cifar = [cifar[i] for i in order]
+
+    for i, label in zip(range(10), cifar):
+        idx = np.where(labels_epoch == i)
+        plt.scatter(cluster[idx, 0], cluster[idx, 1], marker='.', label=label)
+    
+    plt.legend()
+    plt.savefig(fname)
+    plt.cla()
+    plt.clf()
+    plt.close()

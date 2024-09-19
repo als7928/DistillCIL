@@ -22,7 +22,7 @@ class DataManager(object):
     def __init__(self, dataset_name, shuffle, seed, init_cls, increment):
         self.dataset_name = dataset_name
         self._setup_data(dataset_name, shuffle, seed)
-        print(len(self._class_order))
+        # print(len(self._class_order))
         assert init_cls <= len(self._class_order), "No enough classes."
         self._increments = [init_cls]
         while sum(self._increments) + increment < len(self._class_order):
@@ -61,6 +61,31 @@ class DataManager(object):
                 [
                     *self._test_trsf,
                     transforms.RandomHorizontalFlip(p=1.0),
+                    *self._common_trsf,
+                ]
+            )
+        elif mode == "rot":
+            trsf = transforms.Compose(
+                [
+                    *self._test_trsf,
+                    # transforms.RandomHorizontalFlip(p=1.0),
+                    transforms.RandomRotation(90),
+                    *self._common_trsf,
+                ]
+            )
+        elif mode == "auto_imagenet":
+            trsf = transforms.Compose(
+                [
+                    *self._test_trsf,
+                    transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
+                    *self._common_trsf,
+                ]
+            )
+        elif mode == "auto_cifar":
+            trsf = transforms.Compose(
+                [
+                    *self._test_trsf,
+                    transforms.AutoAugment(transforms.AutoAugmentPolicy.CIFAR10),
                     *self._common_trsf,
                 ]
             )

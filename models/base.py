@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from utils.toolkit import tensor2numpy, accuracy, accuracy_per_class
+from utils.toolkit import tensor2numpy, accuracy, accuracy_per_class, t_sne_test
 from scipy.spatial.distance import cdist
 import os
 
@@ -88,10 +88,12 @@ class BaseLearner(object):
     def eval_task(self, save_conf=False):
         y_pred, y_true = self._eval_cnn(self.test_loader)
         cnn_accy = self._evaluate(y_pred, y_true)
-
         if hasattr(self, "_class_means"):
             y_pred, y_true = self._eval_nme(self.test_loader, self._class_means)
             nme_accy = self._evaluate(y_pred, y_true)
+        elif hasattr(self, '_protos'):
+            y_pred, y_true = self._eval_nme(self.test_loader, self._protos/np.linalg.norm(self._protos,axis=1)[:,None])
+            nme_accy = self._evaluate(y_pred, y_true)  
         else:
             nme_accy = None
 
@@ -122,16 +124,43 @@ class BaseLearner(object):
         else:
             return (self._data_memory, self._targets_memory)
 
+    def _compute_nme(self, model, loader, class_means):
+        model.eval()
+        vectors, y_true = self._extract_vectors(loader)
+        vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
+
+        dists = cdist(class_means, vectors, "sqeuclidean")  # [nb_classes, N]
+        scores = dists.T  # [N, nb_classes], choose the one with the smallest distance
+
+        y_pred, y_true = np.argsort(scores, axis=1)[:, : self.topk], y_true  # [N, topk]
+        nme_accy = self._evaluate(y_pred, y_true)
+        
+        return nme_accy
+    
     def _compute_accuracy(self, model, loader):
         model.eval()
+        
+        st_feats = []
+        real = []
         correct, total = 0, 0
         for i, (_, inputs, targets) in enumerate(loader):
             inputs = inputs.to(self._device)
             with torch.no_grad():
-                outputs = model(inputs)["logits"]
-            predicts = torch.max(outputs, dim=1)[1]
+                outputs = model(inputs)
+                outputs_logit = outputs["logits"]
+
+            predicts = torch.max(outputs_logit, dim=1)[1]
             correct += (predicts.cpu() == targets).sum()
             total += len(targets)
+
+            if self.args["drawing"] == True:
+                with torch.no_grad():
+                    outputs_features = outputs["features"]
+                    st_feats += outputs_features.detach().cpu().numpy().tolist()
+                    real += targets.cpu().numpy().tolist()
+
+        if self.args["drawing"] == True:
+            t_sne_test(st_feats, real, 'tsne_test.png')
 
         return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
 
@@ -161,7 +190,7 @@ class BaseLearner(object):
         scores = dists.T  # [N, nb_classes], choose the one with the smallest distance
 
         return np.argsort(scores, axis=1)[:, : self.topk], y_true  # [N, topk]
-
+    
     def _extract_vectors(self, loader):
         self._network.eval()
         vectors, targets = [], []

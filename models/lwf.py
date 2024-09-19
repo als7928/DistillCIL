@@ -11,14 +11,14 @@ from utils.inc_net import IncrementalNet
 from models.base import BaseLearner
 from utils.toolkit import target2onehot, tensor2numpy
 
-init_epoch = 200
+init_epoch = 5
 init_lr = 0.1
 init_milestones = [60, 120, 160]
 init_lr_decay = 0.1
 init_weight_decay = 0.0005
 
 
-epochs = 250
+epochs = 30
 lrate = 0.1
 milestones = [60, 120, 180, 220]
 lrate_decay = 0.1
@@ -143,7 +143,6 @@ class LwF(BaseLearner):
         logging.info(info)
 
     def _update_representation(self, train_loader, test_loader, optimizer, scheduler):
-
         prog_bar = tqdm(range(epochs))
         for _, epoch in enumerate(prog_bar):
             self._network.train()
