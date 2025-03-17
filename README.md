@@ -15,14 +15,6 @@
 
 <strong> Implementation for Class-Incremental Learning with Multi-Teacher Knowledge Distillation </strong>
 
-Abstract
-
-- [Installation](#installation)
-- [Run](#run-experiment)
-- [Results](#results)
-
-
-
 ### Installation
 **Dependencies**
 * Python 3.8
